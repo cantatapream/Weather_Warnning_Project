@@ -1,0 +1,374 @@
+﻿<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>전국 해상 기상정보</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap"
+        rel="stylesheet">
+
+    <!-- Styles -->
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* 내 주변 바다 기상전망 버튼 */
+        .my-location-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            width: 100%;
+            padding: 14px 20px;
+            background: linear-gradient(135deg, #4285f4, #34a853);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(66, 133, 244, 0.3);
+        }
+
+        .my-location-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(66, 133, 244, 0.4);
+        }
+
+        .my-location-btn:active {
+            transform: translateY(0);
+        }
+
+        .my-location-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .my-location-btn i {
+            font-size: 1.2rem;
+        }
+    </style>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+
+    <!-- OpenLayers for Tide Map -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@v8.2.0/ol.css">
+    <script src="https://cdn.jsdelivr.net/npm/ol@v8.2.0/dist/ol.js"></script>
+
+    <!-- SunCalc - 천문 정보 계산 (일출몰, 월령 등) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
+
+    <!-- Korean Lunar Calendar - 음력 변환 -->
+    <script src="https://cdn.jsdelivr.net/npm/korean-lunar-calendar@0.3.6/lib/korean-lunar-calendar.min.js"></script>
+
+    <!-- [사용자 설정] 그래프 막대 개별 위치 조정 -->
+    <script>
+        window.CHART_OFFSETS = [
+            -6, -5, -5, -4, -4, -3, -2, -2, // 1일차
+            -1, -1, 0, 1, 1, 2, 2, 3,       // 2일차
+            4, 4, 5, 5, 6, 7, 7, 8,         // 3일차
+            8, 0, 0, 0, 0, 0, 0, 0          // 여유분
+        ];
+    </script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <!-- Header -->
+        <header class="main-header" onclick="handleHeaderRefresh()" style="cursor: pointer;" title="전체 데이터 새로고침">
+            <div class="header-content">
+                <div class="title-section">
+                    <div class="h1-wrapper" style="display: flex; align-items: center; gap: 10px;">
+                        <h1>
+                            <i class="fa-solid fa-ship"></i> 전국 해상 기상정보
+                        </h1>
+                    </div>
+                    <div class="api-status-wrapper">
+                        <ul id="api-rolling-list">
+                            <li><span class="status-label">시스템 준비 중...</span></li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="time-section">
+                    <div id="current-time" class="time-display">--:--</div>
+                    <div id="current-date" class="date-display">----년 --월 --일</div>
+                </div>
+            </div>
+
+            <!-- 탭 네비게이션 (헤더 내부로 이동) -->
+            <nav class="main-tabs">
+                <button class="tab-btn active" data-target="weather-alert-section">기상정보</button>
+                <button class="tab-btn" data-target="sea-zone-section">해구별 기상</button>
+                <button class="tab-btn" data-target="typhoon-section">태풍정보</button>
+                <button class="tab-btn" data-target="tide-section">물 때 정보</button>
+            </nav>
+        </header>
+
+        <!-- Main Content -->
+        <main class="content-area">
+            <!-- 섹션 1: 해역별 특보 현황 -->
+            <section id="weather-alert-section" class="alert-status-section tab-content active">
+                <!-- 내 주변 바다 기상전망 버튼 -->
+                <div class="my-location-btn-container" style="margin-bottom: 15px;">
+                    <button id="my-location-btn" class="my-location-btn" onclick="showMyLocationWeather()">
+                        <i class="fa-solid fa-location-crosshairs"></i>
+                        <span>내 주변 바다 기상전망</span>
+                    </button>
+                </div>
+                <!-- Main Accordion Header -->
+                <div id="main-accordion-header" class="main-accordion-header" onclick="toggleMainAccordion()">
+                    <div class="accordion-title-with-info">
+                        <h2 class="section-title" style="margin: 0;"><i class="fa-solid fa-triangle-exclamation"></i>
+                            해역별 특보 현황</h2>
+                        <button class="info-btn info-btn-small"
+                            onclick="event.stopPropagation(); showWeatherAlertInfoPopup()" title="이용안내">
+                            <i class="fa-solid fa-circle-info"></i>
+                        </button>
+                    </div>
+                    <div class="header-status">
+                        <!-- Initial Loading State -->
+                        <span style="color: rgba(255,255,255,0.5); font-size: 0.85rem; margin-right: 8px;">
+                            <i class="fa-solid fa-spinner fa-spin"></i>
+                        </span>
+                        <i id="main-accordion-icon" class="fa-solid fa-chevron-down"></i>
+                    </div>
+                </div>
+
+                <!-- Main Accordion Body -->
+                <div id="main-accordion-body" class="main-accordion-body collapsed">
+                    <!-- Loading State -->
+                    <div id="loading-indicator" class="loading-container">
+                        <div class="spinner"></div>
+                        <p>기상 정보를 불러오는 중입니다...</p>
+                    </div>
+
+                    <!-- Alert Containers -->
+                    <div id="alert-content" class="alert-content hidden">
+                        <!-- 동해 -->
+                        <div class="sea-section" id="east-sea-section">
+                            <div class="sea-header" onclick="toggleSection('east-sea-list')">
+                                <div class="sea-title">
+                                    <i class="fa-solid fa-map"></i> 동해 (East Sea) <span class="badge count-badge"
+                                        id="east-count">0건</span>
+                                </div>
+                                <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                            </div>
+                            <div class="alert-list" id="east-sea-list">
+                                <!-- Items will be injected here -->
+                            </div>
+                        </div>
+
+                        <!-- 서해 -->
+                        <div class="sea-section" id="west-sea-section">
+                            <div class="sea-header" onclick="toggleSection('west-sea-list')">
+                                <div class="sea-title">
+                                    <i class="fa-solid fa-map"></i> 서해 (West Sea) <span class="badge count-badge"
+                                        id="west-count">0건</span>
+                                </div>
+                                <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                            </div>
+                            <div class="alert-list" id="west-sea-list">
+                                <!-- Items will be injected here -->
+                            </div>
+                        </div>
+
+                        <!-- 남해 -->
+                        <div class="sea-section" id="south-sea-section">
+                            <div class="sea-header" onclick="toggleSection('south-sea-list')">
+                                <div class="sea-title">
+                                    <i class="fa-solid fa-map"></i> 남해 (South Sea) <span class="badge count-badge"
+                                        id="south-count">0건</span>
+                                </div>
+                                <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                            </div>
+                            <div class="alert-list" id="south-sea-list">
+                                <!-- Items will be injected here -->
+                            </div>
+                        </div>
+
+                        <!-- 제주 -->
+                        <div class="sea-section" id="jeju-sea-section">
+                            <div class="sea-header" onclick="toggleSection('jeju-sea-list')">
+                                <div class="sea-title">
+                                    <i class="fa-solid fa-map"></i> 제주해역 (Jeju Sea) <span class="badge count-badge"
+                                        id="jeju-count">0건</span>
+                                </div>
+                                <i class="fa-solid fa-chevron-down toggle-icon"></i>
+                            </div>
+                            <div class="alert-list" id="jeju-sea-list">
+                                <!-- Items will be injected here -->
+                            </div>
+                        </div>
+
+                        <!-- API 오류 시 안내 메시지 -->
+                        <div id="alert-error-message" class="alert-error-message hidden"
+                            style="text-align: center; padding: 40px 20px; color: #aaa;">
+                            <i class="fa-solid fa-cloud-exclamation fa-3x"
+                                style="color: #ff5252; margin-bottom: 15px;"></i>
+                            <h3 style="color: #ddd; margin-bottom: 10px;">특보 정보를 불러올 수 없습니다</h3>
+                            <p style="font-size: 0.9rem; line-height: 1.6;">
+                                일시적인 시스템 오류 또는 네트워크 문제일 수 있습니다.<br>
+                                잠시 후 다시 시도해주세요.
+                            </p>
+                            <button onclick="fetchAllData()"
+                                style="margin-top: 20px; padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 6px; color: white; cursor: pointer;">
+                                <i class="fa-solid fa-rotate-right"></i> 다시 시도
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 섹션 2: 해구별 기상정보 -->
+            <section id="sea-zone-section" class="sea-zone-section tab-content">
+                <div class="section-header-with-info">
+                    <h2 class="section-title"><i class="fa-solid fa-map-location-dot"></i> 해구별 기상정보</h2>
+                    <button class="info-btn" onclick="showSeaZoneInfoPopup()" title="이용안내">
+                        <i class="fa-solid fa-circle-info"></i>
+                    </button>
+                </div>
+
+                <div class="sea-zone-map-container">
+                    <div class="map-controls">
+                        <button onclick="zoomMap(1.2)" title="확대">+</button>
+                        <button onclick="zoomMap(0.8)" title="축소">−</button>
+                        <button onclick="resetMap()" title="초기화">⟲</button>
+                    </div>
+
+                    <div class="sea-zone-guide-overlay" id="sea-zone-guide-overlay">
+                        <span class="guide-text" id="sea-zone-guide-text">기상을 확인할 해구를 선택해주세요</span>
+                        <button class="my-location-btn-overlay" id="sea-zone-my-location-btn"
+                            onclick="showMyLocationWeather()">내 위치</button>
+                    </div>
+                    <div id="sea-zone-map" class="sea-zone-map">
+                        <!-- SVG 지도가 여기에 렌더링됨 -->
+                    </div>
+                </div>
+
+                <!-- 출처 정보 (컨테이너 밖) -->
+                <div class="map-source">
+                    <a href="https://www.fips.go.kr/p/S01030102/#" target="_blank" rel="noopener noreferrer">
+                        <span>해양수산부 수산정보포털 수역도</span>
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    </a>
+                </div>
+
+                <div id="zone-info-panel" class="zone-info-panel hidden">
+                    <div class="zone-info-header">
+                        <h4 id="zone-info-title">해구 정보</h4>
+                        <button onclick="closeZonePanel()" class="close-btn">&times;</button>
+                    </div>
+                    <div id="zone-info-content" class="zone-info-content">
+                        <!-- 해구 상세 정보 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 섹션 3: 태풍정보 (준비중) -->
+            <section id="typhoon-section" class="tab-content" style="text-align: center; padding: 50px 20px;">
+                <i class="fa-solid fa-hurricane fa-3x" style="color: #6c757d; margin-bottom: 20px;"></i>
+                <h3 style="color: #ddd; margin-bottom: 10px;">태풍 정보</h3>
+                <p style="color: #888;">추후 제공될 기능입니다.</p>
+            </section>
+
+            <!-- 섹션 4: 물 때 정보 -->
+            <section id="tide-section" class="tab-content">
+                <div class="section-header-with-info">
+                    <h2 class="section-title"><i class="fa-solid fa-water"></i> 물 때 정보</h2>
+                    <button class="info-btn" onclick="showTideInfoPopup()" title="이용안내">
+                        <i class="fa-solid fa-circle-info"></i>
+                    </button>
+                </div>
+
+                <!-- 날짜 네비게이션 -->
+                <div class="tide-date-navigator">
+                    <button class="tide-nav-btn" onclick="prevTideDate()" title="이전 날">
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    <div class="tide-date-display">
+                        <div class="tide-solar-date" id="tide-solar-date">2025년 12월 15일(월)</div>
+                        <div class="tide-lunar-date" id="tide-lunar-date">(음력 2025년 11월 15일)</div>
+                    </div>
+                    <button class="tide-nav-btn" onclick="nextTideDate()" title="다음 날">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <button class="tide-calendar-btn" onclick="showTideDatePicker()" title="날짜 선택">
+                        <i class="fa-solid fa-calendar-days"></i>
+                    </button>
+
+                </div>
+
+                <!-- 조석 지도 -->
+                <div class="sea-zone-map-container" style="margin-bottom: 20px;">
+                    <div id="tide-map" style="width: 100%; height: 500px; border-radius: 10px; overflow: hidden;"></div>
+                </div>
+
+                <!-- 출처 정보 -->
+                <div class="map-source">
+                    <a href="https://www.khoa.go.kr/kcom/cnt/selectContentsPage.do?cntId=11501000" target="_blank"
+                        rel="noopener noreferrer">
+                        <span>국립해양조사원 조석예보 API 활용</span>
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                    </a>
+                </div>
+
+            </section>
+        </main>
+    </div>
+
+    <!-- Templates -->
+    <template id="alert-item-template">
+        <div class="alert-card">
+            <div class="alert-header">
+                <h3 class="zone-name">구역명</h3>
+                <div class="alert-badges">
+                    <!-- Badges injected here -->
+                </div>
+                <i class="fa-solid fa-chevron-right detail-arrow"></i>
+            </div>
+            <div class="alert-details hidden">
+                <div class="detail-row">
+                    <span class="label">발표시각</span>
+                    <span class="value tmFc">--:--</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">발효시각</span>
+                    <span class="value tmEf">--:--</span>
+                </div>
+                <div class="detail-row">
+                    <span class="label">해제예정</span>
+                    <span class="value release-time">미정</span>
+                </div>
+            </div>
+        </div>
+    </template>
+
+    <!-- 해구도 정보 모달은 app.js에서 동적으로 생성됨 -->
+
+    <!-- 조석 데이터 및 로직 -->
+    <script src="tide_data.js"></script>
+    <script src="tide.js"></script>
+    <script src="tide_calendar.js"></script>
+    <script src="seaZonesData.js"></script>
+
+    <script src="zoneOverlayConfig.js"></script>
+    <script src="gridCalibrationData.js"></script>
+    <script src="buoyLocations.js"></script>
+    <script src="seaZoneCoordinates.js"></script>
+    <script src="seaZones.js"></script>
+    <script src="app.js"></script>
+</body>
+
+</html>

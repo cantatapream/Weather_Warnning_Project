@@ -1,0 +1,28 @@
+# Netlify 배포 설정 파일
+
+[build]
+  # 배포할 폴더 (정적 파일들)
+  publish = "public"
+  # 서버리스 함수 폴더
+  functions = "netlify/functions"
+
+[functions]
+  # Node.js 버전
+  node_bundler = "esbuild"
+
+# 환경변수는 Netlify 대시보드에서 설정
+# Site settings > Environment variables
+
+# 리다이렉트 규칙 (API 프록시)
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# 헤더 설정 (CORS)
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type"
