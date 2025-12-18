@@ -1661,17 +1661,24 @@ async function fetchBuoyDataForModal(buoyId) {
     const container = document.getElementById('buoy-weather-data');
     if (!container) return;
 
-    // Netlify 환경에서는 서비스 준비 중 메시지 표시
+    // Netlify 환경에서는 서버리스 함수를 통해 데이터 조회
     if (typeof CONFIG !== 'undefined' && CONFIG.IS_NETLIFY) {
-        container.innerHTML = `
-            <div style="text-align:center; padding:20px;">
-                <p style="font-size:1.1em; color:#ff9800;">⚠️ 서비스 준비 중</p>
-                <p style="color:#888; font-size:0.9em; margin-top:10px;">
-                    부이 상세 정보 기능은<br>보안 업데이트 작업 중입니다.
-                </p>
-            </div>
-        `;
-        return;
+        try {
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-buoy?id=${buoyId}`);
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const result = await response.json();
+            if (result.success && result.data && result.data[buoyId]) {
+                displayBuoyDataInModal(container, result.data[buoyId]);
+            } else {
+                container.innerHTML = '<div style="text-align:center; padding:20px; color:#888;">최근 관측 데이터가 없습니다.</div>';
+            }
+            return;
+        } catch (e) {
+            console.error('Serverless Buoy Error:', e.message);
+            container.innerHTML = `<div style="text-align:center; padding:20px; color:#ff6b6b;">데이터 로드 실패<br><span style="font-size:0.8em; color:#888;">${e.message}</span></div>`;
+            return;
+        }
     }
 
     try {
