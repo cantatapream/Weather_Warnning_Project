@@ -1757,31 +1757,39 @@ function displayBuoyDataInModal(container, data) {
     ];
 
     let html = '<div style="display:grid; gap:8px; font-size:0.9rem;">';
-    let hasData = false;
+    let hasValidData = false;
 
     metrics.forEach(m => {
-        if (data[m.key] !== null) {
+        const val = data[m.key];
+        // -99나 null이 아닌 정상적인 값만 표시
+        if (val !== null && val !== undefined && val > -90) {
             html += `<div style="display:flex; justify-content:space-between;">
                 <span style="color:#888;">${m.label}</span>
-                <span style="color:${m.color}; font-weight:500;">${data[m.key]}${m.unit}</span>
+                <span style="color:${m.color}; font-weight:500;">${val}${m.unit}</span>
             </div>`;
-            hasData = true;
+            hasValidData = true;
         }
     });
 
-    if (!hasData) {
-        html += '<div style="text-align:center; color:#888; padding:20px;">표시할 데이터가 없습니다.</div>';
+    if (!hasValidData) {
+        html += '<div style="text-align:center; color:#888; padding:20px;">표시할 관측 데이터가 없습니다.</div>';
     }
-
     html += '</div>';
 
-    // 관측 시간 포맷
-    let timeStr = data.time || '';
-    if (timeStr.length === 12) {
-        timeStr = `${timeStr.substring(4, 6)}. ${timeStr.substring(6, 8)}. ${timeStr.substring(8, 10)}:${timeStr.substring(10, 12)}`;
+    // 관측 시간 표시 (data.tm 활용)
+    let timeStr = data.tm || '';
+    if (timeStr && timeStr.length >= 10) {
+        // YYYYMMDDHHmm -> MM.DD HH:mm
+        const mm = timeStr.substring(4, 6);
+        const dd = timeStr.substring(6, 8);
+        const hh = timeStr.substring(8, 10);
+        const mi = timeStr.length >= 12 ? timeStr.substring(10, 12) : '00';
+        timeStr = `${mm}.${dd} ${hh}:${mi}`;
+    } else {
+        timeStr = '정보 없음';
     }
 
-    html += `<div style="margin-top:15px; font-size:0.75rem; color:#666; text-align:right;">관측 시간: ${timeStr}</div>`;
+    html += `<div style="margin-top:15px; font-size:0.75rem; color:#666; text-align:right; border-top:1px solid rgba(255,255,255,0.05); padding-top:8px;">관측 시간: ${timeStr}</div>`;
 
     container.innerHTML = html;
 }
