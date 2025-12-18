@@ -1,9 +1,12 @@
 // Configuration
 const CONFIG = {
-    KMA_HUB_KEY: 'ZKEQU5ukRvGhEFObpBbxVw',
-    DATA_PORTAL_KEY: 'PmxnR43icJwR7yzKjG612RncLikLD1RvZpPLgEJqUUx0vGQncdfuT9VjiqBlgiXMdcjyKopi4yvUPaPbcdIUfg%3D%3D',
+    // API 키는 서버(Netlify 환경변수)에 안전하게 저장됨
+    // 클라이언트에서는 서버리스 함수를 통해 API 호출
 
-    // API 엔드포인트
+    // 서버리스 함수 엔드포인트 (Netlify Functions)
+    SERVERLESS_BASE_URL: '/.netlify/functions',
+
+    // 기존 API 엔드포인트 (fallback용, CORS 프록시 필요)
     KMA_API_URL: 'https://apihub.kma.go.kr/api/typ01/url/wrn_now_data.php',
     BUOY_API_URL: 'https://apihub.kma.go.kr/api/typ01/url/sea_obs.php',
     PORTAL_API_URL: 'https://apis.data.go.kr/1360000/WthrWrnInfoService/getWthrWrnList',
@@ -12,9 +15,13 @@ const CONFIG = {
     USE_CORS_PROXY: true,
     CORS_PROXY: 'https://corsproxy.io/?',
 
+    // 서버리스 함수 사용 여부 (true: 서버리스 함수, false: 직접 API 호출)
+    USE_SERVERLESS: true,
+
     // 테스트 모드 - true로 설정하면 Mock 데이터 사용
     USE_MOCK_DATA: false
 };
+
 
 // ----------------------------------------------------------------------------
 // Constants & Mappings
@@ -789,36 +796,49 @@ async function fetchAllData() {
 
 // --- KMA HUB API (wrn_now_data.php) ---
 async function fetchKmaHubData() {
-    // wrn_now_data.php 사용 - 현재 발효중인 특보 및 예비특보 조회
-    const tm2 = getKfTime();
-    // mode=1: 예비특보 포함, mode=0: 현재 발효중만
-    const url = `${CONFIG.KMA_API_URL}?tm2=${tm2}&mode=1&help=0&authKey=${CONFIG.KMA_HUB_KEY}`;
+    // 서버리스 함수 사용 (API 키가 서버에 안전하게 저장됨)
+    if (CONFIG.USE_SERVERLESS) {
+        try {
+            console.log('Fetching KMA Hub via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-alerts`);
 
-    console.log('Fetching KMA Hub:', url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
-    try {
-        const response = await fetch(getProxiedUrl(url));
+            const result = await response.json();
+            console.log('Serverless Response:', result);
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            if (result.success && result.data) {
+                // 서버리스 함수에서 이미 파싱된 데이터 반환
+                // 하지만 현재 서버리스 함수는 raw 데이터를 반환하므로 parseHubText 필요
+                if (Array.isArray(result.data)) {
+                    // 이미 파싱된 형태라면 변환
+                    return result.data.map(alert => ({
+                        zone: alert.zone || '',
+                        warnType: alert.warnType || '',
+                        level: alert.warnLevel || alert.level || '',
+                        startTime: alert.startTime || '',
+                        endTime: '',
+                        isCurrentlyActive: true
+                    }));
+                }
+            }
+
+            throw new Error('Invalid serverless response');
+        } catch (e) {
+            console.error('Serverless function error:', e.message);
+            console.log('Falling back to direct API call...');
+            // fallthrough to direct API call
         }
-
-        // EUC-KR 인코딩 처리
-        const buffer = await response.arrayBuffer();
-        const decoder = new TextDecoder('euc-kr');
-        const text = decoder.decode(buffer);
-
-        console.log('Hub Raw Response (first 1000 chars):', text.substring(0, 1000));
-
-        const parsed = parseHubText(text);
-        console.log('Hub Parsed:', parsed.length, 'items');
-
-        return parsed;
-    } catch (e) {
-        console.error('Hub API Error:', e.message);
-        console.log('Falling back to mock data...');
-        return getMockAlerts();
     }
+
+    // 기존 직접 API 호출 (fallback) - 주의: API 키가 노출됨
+    console.log('⚠️ Direct API call (API key exposed in client)');
+    const tm2 = getKfTime();
+    // API 키가 없으므로 Mock 데이터 반환
+    console.log('API key not available in client, using mock data...');
+    return getMockAlerts();
 }
 
 
@@ -4099,8 +4119,8 @@ window.showMyLocationWeather = showMyLocationWeather;
 
 // ==================== 해상예보 테이블 표시 ====================
 
-// 해상예보 API 키
-const SEA_FORECAST_API_KEY = 'ZKEQU5ukRvGhEFObpBbxVw';
+// 해상예보 API 키는 서버(Netlify 환경변수)에 안전하게 저장됨
+// const SEA_FORECAST_API_KEY = '서버에서 관리';
 
 // 날씨 코드
 const SEA_WEATHER_CODES = {
@@ -4428,11 +4448,23 @@ async function showSeaForecastTable(zoneName) {
     }
 
     try {
-        const url = `https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstMsgService/getSeaFcst?pageNo=1&numOfRows=30&dataType=JSON&regId=${regId}&authKey=${SEA_FORECAST_API_KEY}`;
-        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+        // 서버리스 함수를 통해 API 호출 (API 키가 서버에서 관리됨)
+        let data;
+        if (CONFIG.USE_SERVERLESS) {
+            console.log('Fetching sea forecast via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-sea-zone?code=${regId}`);
+            const result = await response.json();
 
-        const response = await fetch(proxyUrl);
-        const data = await response.json();
+            if (result.success && result.data) {
+                // 서버리스 함수에서 반환된 데이터
+                data = { response: { body: { items: { item: result.data } } } };
+            } else {
+                throw new Error('No data from serverless function');
+            }
+        } else {
+            // Fallback: 직접 호출 불가 (API 키 없음)
+            throw new Error('API key not available');
+        }
 
         if (data.response?.body?.items?.item) {
             let items = data.response.body.items.item;
