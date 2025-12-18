@@ -1,5 +1,5 @@
 /**
- * 🌊 해구별 기상 정보 조회 서비스 (지능형 검색 및 디버깅 강화 버전)
+ * 🌊 해구별 기상 정보 조회 서비스 (API 파라미터 최종 보정 버전)
  */
 export default async function handler(request, context) {
     const url = new URL(request.url);
@@ -25,30 +25,30 @@ async function fetchMarineForecastSecurely(zoneId) {
     const API_KEY = process.env.KMA_HUB_KEY || 'ZKEQU5ukRvGhEFObpBbxVw';
     const baseUrl = `https://apihub.kma.go.kr/api/typ06/url/marine_large_zone.php`;
 
-    // 대해구(Lzone) 번호를 3자리 숫자로 보정 (예: 221 -> 221, 1 -> 001)
-    let lZone = String(zoneId).split('-')[0].replace(/[^0-9]/g, '').padStart(3, '0');
-    const sZone = String(zoneId).split('-')[1] || '';
+    let lZone = String(zoneId).split('-')[0].replace(/[^0-9]/g, '');
+    let sZone = String(zoneId).split('-')[1] || '0';
 
     const kstOffset = 9 * 60 * 60 * 1000;
     let lastRawResponse = "";
 
-    // 최근 48시간을 뒤져서 데이터가 있는 가장 최신 발표 시점 찾기
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < 24; i++) {
         const d = new Date(Date.now() + kstOffset);
         d.setHours(d.getHours() - i);
+
+        // YYYYMMDDHH00 포맷
         const tm = d.getUTCFullYear() +
             String(d.getUTCMonth() + 1).padStart(2, '0') +
             String(d.getUTCDate()).padStart(2, '0') +
             String(d.getUTCHours()).padStart(2, '0') + '00';
 
-        let url = `${baseUrl}?tma_fc=${tm}&Lzone=${lZone}&help=1&authKey=${API_KEY}`;
-        if (sZone) url += `&Szone=${sZone}`;
+        // tm_fc 파라미터가 Typ06 정석
+        let url = `${baseUrl}?tm_fc=${tm}&Lzone=${lZone}&Szone=${sZone}&help=1&authKey=${API_KEY}`;
 
         try {
             const resp = await fetch(url);
             const buffer = await resp.arrayBuffer();
             const text = new TextDecoder('euc-kr').decode(buffer);
-            lastRawResponse = text.substring(0, 200).replace(/[\r\n]/g, ' ');
+            lastRawResponse = text.substring(0, 100).replace(/[\r\n]/g, ' ');
 
             const hasData = text.split('\n').some(line => {
                 const trimmed = line.trim();
@@ -68,7 +68,7 @@ async function fetchMarineForecastSecurely(zoneId) {
         success: true,
         source: 'api',
         data: [],
-        message: "기상청에서 해당 구역의 자료를 찾을 수 없습니다.",
+        message: "현재 이용 가능한 해구 예보 데이터가 없습니다.",
         debug: lastRawResponse
     };
 }
@@ -82,7 +82,7 @@ function parseMarineData(text, sZoneTarget) {
         const p = line.trim().split(/\s+/);
 
         if (p.length >= 10) {
-            if (sZoneTarget && p[3] !== sZoneTarget && p[3] !== '0') continue;
+            if (sZoneTarget !== '0' && p[3] !== sZoneTarget) continue;
 
             const parseV = (v) => {
                 const n = parseFloat(v);
