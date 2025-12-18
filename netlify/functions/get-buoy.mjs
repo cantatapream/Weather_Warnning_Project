@@ -22,29 +22,39 @@ export default async function handler(request, context) {
     }
 
     try {
-        // 메모리 캐시 확인 (10분 이내면 캐시 반환)
-        if (buoyCache.data && buoyCache.lastUpdate && (now - buoyCache.lastUpdate) < CACHE_TTL) {
-            console.log('📦 부이 캐시 사용, 나이:', Math.round((now - buoyCache.lastUpdate) / 1000), '초');
+        // Netlify Blobs에서 캐시 확인 (영구 저장소)
+        const blobStore = context.blobs ? await context.blobs('cache') : null;
+        let cached = null;
+
+        if (blobStore) {
+            try {
+                const cachedStr = await blobStore.get('buoy_data');
+                if (cachedStr) {
+                    cached = JSON.parse(cachedStr);
+                }
+            } catch (e) {
+                console.log('캐시 읽기 실패:', e.message);
+            }
+        } else {
+            // Blobs 사용 불가 시 메모리 캐시 사용
+            cached = buoyCache;
+        }
+
+        // 캐시가 있고 10분 이내면 캐시 반환
+        if (cached && cached.data && cached.lastUpdate && (now - cached.lastUpdate) < CACHE_TTL) {
+            console.log('📦 부이 캐시 사용, 나이:', Math.round((now - cached.lastUpdate) / 1000), '초');
             return new Response(JSON.stringify({
                 success: true,
                 source: 'cache',
-                lastUpdate: buoyCache.lastUpdate,
-                age: Math.round((now - buoyCache.lastUpdate) / 1000),
-                data: buoyCache.data
+                lastUpdate: cached.lastUpdate,
+                age: Math.round((now - cached.lastUpdate) / 1000),
+                data: cached.data
             }), { status: 200, headers });
         }
 
         // API 호출
         console.log('🔄 부이 API 호출 중...');
-        const API_KEY = process.env.KMA_HUB_KEY || '';
-
-        if (!API_KEY) {
-            console.error('API 키가 설정되지 않음');
-            return new Response(JSON.stringify({
-                success: false,
-                error: 'API key not configured'
-            }), { status: 500, headers });
-        }
+        const API_KEY = process.env.KMA_HUB_KEY || 'ZKEQU5ukRvGhEFObpBbxVw';
 
         const apiUrl = `https://apihub.kma.go.kr/api/typ01/url/sea_obs.php?stn=0&help=0&authKey=${API_KEY}`;
 
@@ -59,17 +69,25 @@ export default async function handler(request, context) {
         const decoder = new TextDecoder('euc-kr');
         const text = decoder.decode(buffer);
 
-        console.log('부이 API 응답 (처음 200자):', text.substring(0, 200));
-
         // 데이터 파싱
         const buoyData = parseBuoyData(text);
         console.log('파싱된 부이 수:', buoyData.length);
 
         // 캐시 저장
-        buoyCache = {
+        const cacheData = {
             lastUpdate: now,
             data: buoyData
         };
+
+        if (blobStore) {
+            try {
+                await blobStore.set('buoy_data', JSON.stringify(cacheData));
+            } catch (e) {
+                console.log('캐시 저장 실패:', e.message);
+            }
+        } else {
+            buoyCache = cacheData;
+        }
 
         return new Response(JSON.stringify({
             success: true,
@@ -81,13 +99,14 @@ export default async function handler(request, context) {
     } catch (error) {
         console.error('부이 데이터 조회 오류:', error.message);
 
-        // 이전 캐시가 있으면 반환
-        if (buoyCache.data) {
+        // 이전 캐시가 있으면 반환 (메모리 캐시라도)
+        const fallback = buoyCache.data ? buoyCache : null;
+        if (fallback) {
             return new Response(JSON.stringify({
                 success: true,
                 source: 'stale_cache',
-                lastUpdate: buoyCache.lastUpdate,
-                data: buoyCache.data
+                lastUpdate: fallback.lastUpdate,
+                data: fallback.data
             }), { status: 200, headers });
         }
 

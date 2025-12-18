@@ -17,15 +17,10 @@ const COASTAL_ZONE_CODES = [
     '12B10302', '12B10303', '12B10301', '12B10304', '12B10300'
 ];
 
-let coastalCache = {
-    lastUpdate: 0,
-    data: {}
-};
+const CACHE_TTL = 300000; // 5분 (밀리초)
 
 export default async function handler(request, context) {
     const now = Date.now();
-    const url = new URL(request.url);
-    const zoneCode = url.searchParams.get('code');
 
     const headers = {
         'Content-Type': 'application/json',
@@ -44,7 +39,7 @@ export default async function handler(request, context) {
 
         if (blobStore) {
             try {
-                const cachedStr = await blobStore.get('coastal_forecast');
+                const cachedStr = await blobStore.get('coastal_alerts');
                 if (cachedStr) {
                     cached = JSON.parse(cachedStr);
                 }
@@ -55,49 +50,29 @@ export default async function handler(request, context) {
             cached = coastalCache;
         }
 
-        // 특정 구역 요청
-        if (zoneCode) {
-            if (cached && cached.data && cached.data[zoneCode]) {
-                return new Response(JSON.stringify({
-                    success: true,
-                    source: 'cache',
-                    lastUpdate: cached.lastUpdate,
-                    data: cached.data[zoneCode]
-                }), { status: 200, headers });
-            }
-
-            const data = await fetchCoastalForecast(zoneCode);
+        // 캐시가 있고 5분 이내면 캐시 반환
+        if (cached && cached.data && cached.lastUpdate && (now - cached.lastUpdate) < CACHE_TTL) {
+            console.log('📦 연안 특보 캐시 사용, 나이:', Math.round((now - cached.lastUpdate) / 1000), '초');
             return new Response(JSON.stringify({
                 success: true,
-                source: 'api',
-                lastUpdate: now,
-                data: data
+                source: 'cache',
+                lastUpdate: cached.lastUpdate,
+                data: cached.data
             }), { status: 200, headers });
         }
 
-        // 전체 갱신
-        console.log('🔄 앞바다 기상예보 전체 갱신 시작...');
-        const allData = {};
+        // 수동 갱신 (또는 캐시 만료 시)
+        console.log('🔄 연안 특보 API 호출 중 (AFSO)...');
+        const data = await fetchAfsoCoastalData();
 
-        for (const code of COASTAL_ZONE_CODES) {
-            try {
-                const data = await fetchCoastalForecast(code);
-                allData[code] = data;
-                await new Promise(r => setTimeout(r, 200));
-            } catch (e) {
-                console.log(`구역 ${code} 조회 실패:`, e.message);
-            }
-        }
-
-        // 캐시 저장
         const cacheData = {
             lastUpdate: now,
-            data: allData
+            data: data
         };
 
         if (blobStore) {
             try {
-                await blobStore.set('coastal_forecast', JSON.stringify(cacheData));
+                await blobStore.set('coastal_alerts', JSON.stringify(cacheData));
             } catch (e) {
                 console.log('캐시 저장 실패:', e.message);
             }
@@ -109,11 +84,11 @@ export default async function handler(request, context) {
             success: true,
             source: 'api',
             lastUpdate: now,
-            count: Object.keys(allData).length
+            data: data
         }), { status: 200, headers });
 
     } catch (error) {
-        console.error('앞바다 기상예보 조회 오류:', error);
+        console.error('연안 특보 조회 오류:', error);
         return new Response(JSON.stringify({
             success: false,
             error: error.message
@@ -121,25 +96,47 @@ export default async function handler(request, context) {
     }
 }
 
-// 앞바다 기상예보 조회
-async function fetchCoastalForecast(regId) {
-    const API_KEY = process.env.KMA_HUB_KEY || 'ZKEQU5ukRvGhEFObpBbxVw';
-    const url = `https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstMsgService/getSeaFcst?pageNo=1&numOfRows=30&dataType=JSON&regId=${regId}&authKey=${API_KEY}`;
+// AFSO API에서 연안바다 특보 수집
+async function fetchAfsoCoastalData() {
+    const now = new Date();
+    const tmFc = now.getFullYear().toString() +
+        String(now.getMonth() + 1).padStart(2, '0') +
+        String(now.getDate()).padStart(2, '0') +
+        String(now.getHours()).padStart(2, '0') +
+        String(now.getMinutes()).padStart(2, '0');
 
-    const response = await fetch(url);
-    const data = await response.json();
+    const apiUrl = `https://afso.kma.go.kr/afsOut/mmr/warning/retMmrWarningSeaNow.kajx?tmFc=${tmFc}&stnId=108&fe=f&mmr=mmr&tmFe=`;
 
-    if (data.response?.body?.items?.item) {
-        let items = data.response.body.items.item;
-        if (!Array.isArray(items)) items = [items];
-        return items;
+    const response = await fetch(apiUrl);
+    const result = await response.json();
+
+    const metData = result.data?.metData || result.metData;
+    if (!metData) return {};
+
+    const coastalAlerts = {};
+    for (const item of metData) {
+        const regKo = item.regKo || '';
+        if (!regKo.includes('연안바다') && !regKo.includes('평수구')) continue;
+        if (!item.wrnTp || item.wrnTp.trim() === '') continue;
+
+        let zoneName = regKo.replace(/\s+/g, '');
+        if (zoneName.endsWith('평수구') && !zoneName.endsWith('평수구역')) {
+            zoneName = zoneName + '역';
+        }
+
+        coastalAlerts[zoneName] = {
+            zoneName: zoneName,
+            warnType: item.wrnTp === '해일' ? '폭풍해일' : item.wrnTp,
+            level: item.lvl === '3' ? '경보' : (item.lvl === '2' ? '주의보' : '예비특보'),
+            startTime: item.tmEf,
+            endTime: item.tmFe,
+            content: item.t1,
+            isCoastal: true,
+            source: 'AFSO'
+        };
     }
-
-    return null;
+    return coastalAlerts;
 }
 
-// 스케줄 설정: 05:30, 06:30, 17:30, 18:30
-// on-demand 경로: /.netlify/functions/get-coastal
-export const config = {
-    schedule: "30 5,6,17,18 * * *"
-};
+// Netlify Functions 설정 (온디맨드 함수)
+// 경로: /.netlify/functions/get-coastal

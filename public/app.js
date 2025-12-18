@@ -1,5 +1,12 @@
 // Configuration
 const CONFIG = {
+    // 배포 환경 감지 (Netlify에서는 서버리스 함수 사용)
+    IS_NETLIFY: window.location.hostname.includes('netlify.app'),
+
+    // 서버리스 함수 엔드포인트
+    SERVERLESS_BASE_URL: '/.netlify/functions',
+
+    // API 키 (로컬 개발용, Netlify에서는 서버리스 함수가 환경변수 사용)
     KMA_HUB_KEY: 'ZKEQU5ukRvGhEFObpBbxVw',
     DATA_PORTAL_KEY: 'PmxnR43icJwR7yzKjG612RncLikLD1RvZpPLgEJqUUx0vGQncdfuT9VjiqBlgiXMdcjyKopi4yvUPaPbcdIUfg%3D%3D',
 
@@ -789,9 +796,43 @@ async function fetchAllData() {
 
 // --- KMA HUB API (wrn_now_data.php) ---
 async function fetchKmaHubData() {
-    // wrn_now_data.php 사용 - 현재 발효중인 특보 및 예비특보 조회
+    // Netlify 환경에서는 서버리스 함수 사용
+    if (CONFIG.IS_NETLIFY) {
+        try {
+            console.log('Fetching KMA Hub via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-alerts`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Serverless Response:', result);
+
+            if (result.success && result.data) {
+                // 서버리스 함수에서 이미 파싱된 데이터 반환
+                if (Array.isArray(result.data)) {
+                    return result.data.map(alert => ({
+                        zone: alert.zone || '',
+                        warnType: alert.warnType || '',
+                        level: alert.warnLevel || alert.level || '',
+                        startTime: alert.startTime || '',
+                        endTime: '',
+                        isCurrentlyActive: true
+                    }));
+                }
+            }
+
+            throw new Error('Invalid serverless response');
+        } catch (e) {
+            console.error('Serverless function error:', e.message);
+            console.log('Falling back to mock data...');
+            return getMockAlerts();
+        }
+    }
+
+    // 로컬 환경: 기존 직접 API 호출
     const tm2 = getKfTime();
-    // mode=1: 예비특보 포함, mode=0: 현재 발효중만
     const url = `${CONFIG.KMA_API_URL}?tm2=${tm2}&mode=1&help=0&authKey=${CONFIG.KMA_HUB_KEY}`;
 
     console.log('Fetching KMA Hub:', url);
@@ -988,7 +1029,32 @@ function getMockAlerts() {
 
 // --- AFSO 연안바다/평수구역 API (웹페이지 내부 API) ---
 async function fetchAfsoCoastalData() {
-    // 현재 시간을 YYYYMMDDHHMI 형식으로 생성
+    // Netlify 환경에서는 서버리스 함수 사용
+    if (CONFIG.IS_NETLIFY) {
+        try {
+            console.log('Fetching Coastal Data via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-coastal`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Serverless Coastal Response:', result);
+
+            if (result.success && result.data) {
+                // 서버리스 함수에서 이미 파싱/수집된 데이터 반환
+                return result.data;
+            }
+
+            throw new Error('Invalid serverless response');
+        } catch (e) {
+            console.error('Serverless function error:', e.message);
+            return {};
+        }
+    }
+
+    // 로컬 환경: 직접 AFSO API 호출
     const now = new Date();
     const tmFc = now.getFullYear().toString() +
         String(now.getMonth() + 1).padStart(2, '0') +
@@ -1104,7 +1170,50 @@ async function fetchAfsoCoastalData() {
 
 // --- BUOY API (해양관측 데이터) ---
 async function fetchBuoyData() {
-    // 전체 부이 데이터 조회 (stn=0 또는 생략)
+    // Netlify 환경에서는 서버리스 함수 사용
+    if (CONFIG.IS_NETLIFY) {
+        try {
+            console.log('Fetching Buoy Data via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-buoy`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Serverless Buoy Response:', result);
+
+            if (result.success && result.data) {
+                // 서버리스 함수에서 반환된 데이터를 기존 형식으로 변환
+                const buoyData = {};
+                if (Array.isArray(result.data)) {
+                    result.data.forEach(buoy => {
+                        buoyData[buoy.id] = {
+                            id: buoy.id,
+                            name: buoy.name,
+                            lat: buoy.lat,
+                            lon: buoy.lon,
+                            wd: buoy.windDir,
+                            ws: buoy.windSpd,
+                            ta: buoy.temp,
+                            wh: buoy.waveHeight,
+                            wp: buoy.wavePeriod
+                        };
+                    });
+                }
+                console.log('Buoy data converted:', Object.keys(buoyData).length, 'stations');
+                return buoyData;
+            }
+
+            throw new Error('Invalid serverless buoy response');
+        } catch (e) {
+            console.error('Serverless Buoy function error:', e.message);
+            console.log('Using mock buoy data');
+            return getMockBuoyData();
+        }
+    }
+
+    // 로컬 환경: 기존 직접 API 호출
     const url = `${CONFIG.BUOY_API_URL}?stn=0&help=0&authKey=${CONFIG.KMA_HUB_KEY}`;
 
     console.log('Fetching Buoy Data:', url);
@@ -3174,6 +3283,32 @@ window.closeSeaZoneModal = function () {
 // 자동 재시도 로직 적용
 // [새로 작성된 함수] 병렬 요청으로 3일치 데이터 수집
 window.getMarineZoneData = async function (zoneId) {
+    // Netlify 환경에서는 서버리스 함수 사용
+    if (CONFIG.IS_NETLIFY) {
+        try {
+            console.log(`[MarineInfo] Fetching Sea Zone ${zoneId} via Serverless Function...`);
+            showMarineZoneModal(zoneId, null, true); // 로딩 상태 표시
+
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-sea-zone?code=${zoneId}`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const result = await response.json();
+            if (result.success && result.data) {
+                showMarineZoneModal(zoneId, result.data);
+                return;
+            }
+            throw new Error('Invalid serverless response');
+        } catch (e) {
+            console.error('Serverless Sea Zone Error:', e.message);
+            showMarineZoneModal(zoneId, null, false, `<div style="text-align:center;color:#ff6b6b;padding:20px;">데이터를 불러오는 중 오류가 발생했습니다.<br>${e.message}</div>`);
+            return;
+        }
+    }
+
+    // 로컬 환경: 기존 방식
     // 요청 ID 생성 (모달 닫기 시 취소 확인용)
     const requestId = Date.now() + '_' + zoneId;
     window._marineZoneRequestId = requestId;
@@ -4428,11 +4563,27 @@ async function showSeaForecastTable(zoneName) {
     }
 
     try {
-        const url = `https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstMsgService/getSeaFcst?pageNo=1&numOfRows=30&dataType=JSON&regId=${regId}&authKey=${SEA_FORECAST_API_KEY}`;
-        const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+        let data;
 
-        const response = await fetch(proxyUrl);
-        const data = await response.json();
+        // Netlify 환경에서는 서버리스 함수 사용
+        if (CONFIG.IS_NETLIFY) {
+            console.log('Fetching sea forecast via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-sea-zone?code=${regId}`);
+            const result = await response.json();
+
+            if (result.success && result.data) {
+                data = { response: { body: { items: { item: result.data } } } };
+            } else {
+                throw new Error('No data from serverless function');
+            }
+        } else {
+            // 로컬 환경: 기존 직접 API 호출
+            const url = `https://apihub.kma.go.kr/api/typ02/openApi/VilageFcstMsgService/getSeaFcst?pageNo=1&numOfRows=30&dataType=JSON&regId=${regId}&authKey=${SEA_FORECAST_API_KEY}`;
+            const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(url);
+
+            const response = await fetch(proxyUrl);
+            data = await response.json();
+        }
 
         if (data.response?.body?.items?.item) {
             let items = data.response.body.items.item;
