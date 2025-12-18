@@ -1,6 +1,4 @@
-// 해구별 기상 정보 조회 함수 (발표 시각 자동 검색 로직 추가)
-let seaZoneCache = { lastUpdate: 0, data: {} };
-
+// 해구별 기상 정보 조회 함수 (한국 시간 시차 보정 완료)
 export default async function handler(request, context) {
     const now = Date.now();
     const url = new URL(request.url);
@@ -15,14 +13,14 @@ export default async function handler(request, context) {
 
     try {
         const blobStore = context.blobs ? await context.blobs('cache') : null;
-        let cached = null;
+
+        // 캐시 확인 시 zoneCode 포함하여 고유하게 관리
         if (blobStore) {
             try {
                 const cachedStr = await blobStore.get(`sea_zone_${zoneCode}`);
                 if (cachedStr) {
-                    cached = JSON.parse(cachedStr);
-                    // 캐시가 3시간 이내면 사용
-                    if (now - cached.lastUpdate < 3 * 3600000) {
+                    const cached = JSON.parse(cachedStr);
+                    if (now - cached.lastUpdate < 3600000) { // 1시간 이내 캐시 사용
                         return new Response(JSON.stringify({ success: true, source: 'cache', data: cached.data }), { status: 200, headers });
                     }
                 }
@@ -45,14 +43,23 @@ export default async function handler(request, context) {
 async function fetchLatestHubSeaForecast(zoneId) {
     const API_KEY = process.env.KMA_HUB_KEY || 'ZKEQU5ukRvGhEFObpBbxVw';
     const baseUrl = `https://apihub.kma.go.kr/api/typ06/url/marine_large_zone.php`;
-    const lZone = zoneId.split('-')[0];
-    const sZone = zoneId.split('-')[1] || '';
+    const parts = zoneId.split('-');
+    const lZone = parts[0];
+    const sZone = parts[1] || '';
 
-    // 현재 시간부터 1시간씩 뒤로 가며 데이터가 있는지 확인 (최대 24시간)
+    // 한국 시간(KST, UTC+9) 계산
+    const kstOffset = 9 * 60 * 60 * 1000;
+
     for (let i = 0; i < 24; i++) {
-        const d = new Date();
+        const d = new Date(Date.now() + kstOffset);
         d.setHours(d.getHours() - i);
-        const tm = d.toISOString().replace(/[^0-9]/g, '').substring(0, 10) + '00'; // YYYYMMDDHH 형식
+
+        // YYYYMMDDHH00 포맷 생성
+        const year = d.getUTCFullYear();
+        const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const day = String(d.getUTCDate()).padStart(2, '0');
+        const hour = String(d.getUTCHours()).padStart(2, '0');
+        const tm = `${year}${month}${day}${hour}00`;
 
         let url = `${baseUrl}?tma_fc=${tm}&tma_ef=${tm}&Lzone=${lZone}&help=1&authKey=${API_KEY}`;
         if (sZone) url += `&Szone=${sZone}`;
@@ -62,9 +69,7 @@ async function fetchLatestHubSeaForecast(zoneId) {
             const buffer = await response.arrayBuffer();
             const text = new TextDecoder('euc-kr').decode(buffer);
 
-            // 데이터가 유효한지 확인 (헤더만 있는 경우 제외)
-            if (text.length > 300 && !text.includes('Error') && !text.includes('없습니다')) {
-                console.log(`[SeaZone] Found valid data at ${tm}`);
+            if (text.length > 400 && !text.includes('Error') && !text.includes('없습니다')) {
                 return parseHubMarineText(text);
             }
         } catch (e) { continue; }
@@ -73,8 +78,8 @@ async function fetchLatestHubSeaForecast(zoneId) {
 }
 
 function parseHubMarineText(text) {
-    const lines = text.split('\n');
     const result = [];
+    const lines = text.split('\n');
     for (const line of lines) {
         if (line.startsWith('#') || line.trim() === '') continue;
         const p = line.trim().split(/\s+/);
@@ -86,6 +91,5 @@ function parseHubMarineText(text) {
             });
         }
     }
-    // 시간순 정렬
     return result.sort((a, b) => a.tm.localeCompare(b.tm));
 }
