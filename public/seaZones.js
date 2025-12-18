@@ -1,4 +1,4 @@
-﻿// ============================================================
+// ============================================================
 // 🌊 전국 해상 기상정보 (조회 모드)
 // ============================================================
 
@@ -1660,6 +1660,19 @@ function showBuoyModal(buoyId, buoyData) {
 async function fetchBuoyDataForModal(buoyId) {
     const container = document.getElementById('buoy-weather-data');
     if (!container) return;
+
+    // Netlify 환경에서는 서비스 준비 중 메시지 표시
+    if (typeof CONFIG !== 'undefined' && CONFIG.IS_NETLIFY) {
+        container.innerHTML = `
+            <div style="text-align:center; padding:20px;">
+                <p style="font-size:1.1em; color:#ff9800;">⚠️ 서비스 준비 중</p>
+                <p style="color:#888; font-size:0.9em; margin-top:10px;">
+                    부이 상세 정보 기능은<br>보안 업데이트 작업 중입니다.
+                </p>
+            </div>
+        `;
+        return;
+    }
 
     try {
         if (typeof CONFIG !== 'undefined' && CONFIG.BUOY_API_URL) {
