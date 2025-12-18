@@ -132,7 +132,7 @@ function parseBuoyData(text) {
 }
 
 // 스케줄 설정: 매시 10분 (00:10, 01:10, ...)
+// on-demand 경로: /.netlify/functions/get-buoy
 export const config = {
-    path: "/api/buoy",
     schedule: "10 * * * *"
 };

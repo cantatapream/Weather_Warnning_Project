@@ -143,7 +143,5 @@ function parseWrnNowData(text) {
     return alerts;
 }
 
-// Netlify Functions 설정
-export const config = {
-    path: "/api/alerts"
-};
+// Netlify Functions 설정 (온디맨드 함수)
+// 경로: /.netlify/functions/get-alerts

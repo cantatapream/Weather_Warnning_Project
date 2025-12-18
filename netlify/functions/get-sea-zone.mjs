@@ -138,7 +138,7 @@ async function fetchZoneForecast(regId) {
 }
 
 // 스케줄 설정: 00:30, 01:30, 12:30, 13:30
+// on-demand 경로: /.netlify/functions/get-sea-zone
 export const config = {
-    path: "/api/sea-zone",
     schedule: "30 0,1,12,13 * * *"
 };

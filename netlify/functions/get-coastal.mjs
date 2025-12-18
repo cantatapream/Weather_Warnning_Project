@@ -139,7 +139,7 @@ async function fetchCoastalForecast(regId) {
 }
 
 // 스케줄 설정: 05:30, 06:30, 17:30, 18:30
+// on-demand 경로: /.netlify/functions/get-coastal
 export const config = {
-    path: "/api/coastal",
     schedule: "30 5,6,17,18 * * *"
 };
