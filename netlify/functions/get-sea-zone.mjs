@@ -1,5 +1,5 @@
 /**
- * 🌊 해구별 기상 정보 조회 서비스 (최종 최적화 버전)
+ * 🌊 해구별 기상 정보 조회 서비스 (지능형 검색 및 디버깅 강화 버전)
  */
 export default async function handler(request, context) {
     const url = new URL(request.url);
@@ -14,33 +14,25 @@ export default async function handler(request, context) {
     if (!zoneCode) return new Response(JSON.stringify({ success: false, error: 'code is required' }), { status: 400, headers });
 
     try {
-        const data = await fetchMarineForecast(zoneCode);
-        if (data && data.length > 0) {
-            return new Response(JSON.stringify({ success: true, source: 'api', data: data }), { status: 200, headers });
-        }
-
-        return new Response(JSON.stringify({
-            success: true,
-            source: 'api',
-            data: [],
-            message: "최신 예보 데이터를 찾을 수 없습니다. 잠시 후 다시 시도해주세요."
-        }), { status: 200, headers });
+        const result = await fetchMarineForecastSecurely(zoneCode);
+        return new Response(JSON.stringify(result), { status: 200, headers });
     } catch (error) {
         return new Response(JSON.stringify({ success: false, error: error.message }), { status: 500, headers });
     }
 }
 
-async function fetchMarineForecast(zoneId) {
+async function fetchMarineForecastSecurely(zoneId) {
     const API_KEY = process.env.KMA_HUB_KEY || 'ZKEQU5ukRvGhEFObpBbxVw';
     const baseUrl = `https://apihub.kma.go.kr/api/typ06/url/marine_large_zone.php`;
 
-    // 대해구(Lzone) 번호 추출
-    const lZone = String(zoneId).split('-')[0].replace(/[^0-9]/g, '');
+    // 대해구(Lzone) 번호를 3자리 숫자로 보정 (예: 221 -> 221, 1 -> 001)
+    let lZone = String(zoneId).split('-')[0].replace(/[^0-9]/g, '').padStart(3, '0');
     const sZone = String(zoneId).split('-')[1] || '';
 
     const kstOffset = 9 * 60 * 60 * 1000;
+    let lastRawResponse = "";
 
-    // 최근 48시간 동안의 발표 시점을 역순으로 검색
+    // 최근 48시간을 뒤져서 데이터가 있는 가장 최신 발표 시점 찾기
     for (let i = 0; i < 48; i++) {
         const d = new Date(Date.now() + kstOffset);
         d.setHours(d.getHours() - i);
@@ -49,7 +41,6 @@ async function fetchMarineForecast(zoneId) {
             String(d.getUTCDate()).padStart(2, '0') +
             String(d.getUTCHours()).padStart(2, '0') + '00';
 
-        // tma_ef를 생략하여 해당 발표 시점의 전체 데이터를 한 번에 요청
         let url = `${baseUrl}?tma_fc=${tm}&Lzone=${lZone}&help=1&authKey=${API_KEY}`;
         if (sZone) url += `&Szone=${sZone}`;
 
@@ -57,28 +48,41 @@ async function fetchMarineForecast(zoneId) {
             const resp = await fetch(url);
             const buffer = await resp.arrayBuffer();
             const text = new TextDecoder('euc-kr').decode(buffer);
+            lastRawResponse = text.substring(0, 200).replace(/[\r\n]/g, ' ');
 
-            // 데이터 유효성 검사 및 파싱
-            if (text.includes('#') && text.length > 500 && !text.includes('없습니다')) {
-                const results = parseMarineData(text, zoneId);
-                if (results.length > 0) return results;
+            const hasData = text.split('\n').some(line => {
+                const trimmed = line.trim();
+                return trimmed && !trimmed.startsWith('#') && /^[0-9]/.test(trimmed);
+            });
+
+            if (hasData) {
+                const data = parseMarineData(text, sZone);
+                if (data.length > 0) {
+                    return { success: true, source: 'api', baseTime: tm, data: data };
+                }
             }
         } catch (e) { continue; }
     }
-    return null;
+
+    return {
+        success: true,
+        source: 'api',
+        data: [],
+        message: "기상청에서 해당 구역의 자료를 찾을 수 없습니다.",
+        debug: lastRawResponse
+    };
 }
 
-function parseMarineData(text, originalZoneId) {
+function parseMarineData(text, sZoneTarget) {
     const lines = text.split('\n');
     const results = [];
-    const sZoneTarget = originalZoneId.includes('-') ? originalZoneId.split('-')[1] : '';
 
     for (const line of lines) {
         if (line.startsWith('#') || line.trim() === '') continue;
         const p = line.trim().split(/\s+/);
 
-        if (p.length >= 15) {
-            if (sZoneTarget && p[3] !== sZoneTarget) continue;
+        if (p.length >= 10) {
+            if (sZoneTarget && p[3] !== sZoneTarget && p[3] !== '0') continue;
 
             const parseV = (v) => {
                 const n = parseFloat(v);
