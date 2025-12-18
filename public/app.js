@@ -1124,33 +1124,52 @@ async function fetchAfsoCoastalData() {
 
 // --- BUOY API (해양관측 데이터) ---
 async function fetchBuoyData() {
-    // 전체 부이 데이터 조회 (stn=0 또는 생략)
-    const url = `${CONFIG.BUOY_API_URL}?stn=0&help=0&authKey=${CONFIG.KMA_HUB_KEY}`;
+    // 서버리스 함수 사용 (API 키가 서버에 안전하게 저장됨)
+    if (CONFIG.USE_SERVERLESS) {
+        try {
+            console.log('Fetching Buoy Data via Serverless Function...');
+            const response = await fetch(`${CONFIG.SERVERLESS_BASE_URL}/get-buoy`);
 
-    console.log('Fetching Buoy Data:', url);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
-    try {
-        const response = await fetch(getProxiedUrl(url));
+            const result = await response.json();
+            console.log('Serverless Buoy Response:', result);
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
+            if (result.success && result.data) {
+                // 서버리스 함수에서 반환된 데이터를 기존 형식으로 변환
+                const buoyData = {};
+                if (Array.isArray(result.data)) {
+                    result.data.forEach(buoy => {
+                        buoyData[buoy.id] = {
+                            id: buoy.id,
+                            name: buoy.name,
+                            lat: buoy.lat,
+                            lon: buoy.lon,
+                            wd: buoy.windDir,
+                            ws: buoy.windSpd,
+                            ta: buoy.temp,
+                            wh: buoy.waveHeight,
+                            wp: buoy.wavePeriod
+                        };
+                    });
+                }
+                console.log('Buoy data converted:', Object.keys(buoyData).length, 'stations');
+                return buoyData;
+            }
+
+            throw new Error('Invalid serverless buoy response');
+        } catch (e) {
+            console.error('Serverless Buoy function error:', e.message);
+            console.log('Using mock buoy data');
+            return getMockBuoyData();
         }
-
-        // EUC-KR 인코딩 처리
-        const buffer = await response.arrayBuffer();
-        const decoder = new TextDecoder('euc-kr');
-        const text = decoder.decode(buffer);
-
-        console.log('Buoy Raw Response (first 500 chars):', text.substring(0, 500));
-
-        const parsed = parseBuoyData(text);
-        console.log('Buoy Parsed:', Object.keys(parsed).length, 'stations');
-
-        return parsed;
-    } catch (e) {
-        console.error('Buoy API Error:', e.message);
-        return getMockBuoyData();
     }
+
+    // 기존 직접 API 호출 (fallback) - API 키 없으므로 Mock 반환
+    console.log('API key not available, using mock buoy data');
+    return getMockBuoyData();
 }
 
 function parseBuoyData(text) {
