@@ -55,8 +55,9 @@ function parseBuoyData(text) {
 
             buoys[stnId] = {
                 id: stnId, name: p[3]?.trim(), lat: parseFloat(p[5]), lon: parseFloat(p[4]),
-                windDir: parseFloat(p[7]), windSpeed: parseFloat(p[8]),
-                waveHeight: parseFloat(p[6]), airTemp: parseFloat(p[11]), waterTemp: parseFloat(p[10]),
+                wd: parseFloat(p[7]), ws: parseFloat(p[8]),
+                wh: parseFloat(p[6]), ta: parseFloat(p[11]), tw: parseFloat(p[10]),
+                pa: parseFloat(p[12]),
                 tm: p[1]?.trim()
             };
         }
